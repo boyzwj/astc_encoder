@@ -2,14 +2,13 @@ defmodule AstcEncoderTest do
   use ExUnit.Case
   doctest AstcEncoder
 
-  alias Vix.Vips.Image, as: VImage
-  alias Vix.Vips.Operation, as: VOp
-
   @source_img "priv/test.png"
 
   test "greets the world" do
-    {:ok, {img, _args}} = VOp.pngload(@source_img)
-    {:ok, img} = VOp.resize(img, 0.5)
+    {:ok, data} = File.read(@source_img)
+    output = AstcEncoder.Native.thumbnail(data, 512, 512, 6, 3)
+    file_data = AstcEncoder.Util.pkg_data(output, 6, 512, 512, 1)
+    :ok = File.write("priv/test.astc", file_data)
     assert AstcEncoder.hello() == :world
   end
 end

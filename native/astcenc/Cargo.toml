@@ -10,7 +10,11 @@ path = "src/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
+astcenc-sys = { path = "../astcenc-sys" }
 rustler = "0.34.0"
 image = "0.25.2"
-webp = "0.3.0"
-libwebp-sys = "0.9.5"
+bitflags = "2.6.0"
+half = "2.4.1"
+
+[dev-dependencies]
+rand = "0.8.5"
