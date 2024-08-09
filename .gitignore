@@ -29,3 +29,4 @@ astc_encoder-*.tar
 **/.cargo/
 **/target/
 **/debug/
+.devcontainer/

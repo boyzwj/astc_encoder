@@ -26,6 +26,8 @@ defmodule AstcEncoder.MixProject do
       {:exsync, "~> 0.4.1", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:vix, "~> 0.29.0", only: [:dev, :test], runtime: false},
+      {:temp, "~> 0.4.7", only: [:dev, :test], runtime: false},
+      {:benchee, "~> 1.1", only: [:dev, :test]},
       {:rustler, "~> 0.34.0", runtime: false}
     ]
   end

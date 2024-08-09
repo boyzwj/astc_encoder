@@ -1,5 +1,8 @@
+use fast_image_resize as fr;
+use fast_image_resize::images::Image;
 use image::imageops;
 use image::DynamicImage::{self, ImageRgba8};
+use image::{GenericImageView, ImageReader};
 use rustler::{Binary, Error};
 mod astcenc;
 
@@ -34,7 +37,7 @@ fn init_context(block_size: u32, speed: u32) -> astcenc::Context {
         .build()
         .unwrap();
 
-    return astcenc::Context::new(config).unwrap();
+    astcenc::Context::new(config).unwrap()
 }
 
 #[rustler::nif]
@@ -45,58 +48,45 @@ fn thumbnail<'a>(
     block_size: u32,
     speed: u32,
 ) -> Result<Vec<u8>, Error> {
-    // let y_flip = true;
-    let swz: astcenc::Swizzle = astcenc::Swizzle::rgba();
+    let swz = astcenc::Swizzle::rgba();
     let mut ctx = init_context(block_size, speed);
 
-    let image: DynamicImage = match image::load_from_memory(body.as_slice()) {
-        Ok(img) => img,
-        Err(_) => return Err(Error::Term(Box::new("Failed to load image"))),
-    };
+    // let src_image = ImageReader::open("priv/test.png")
+    //     .unwrap()
+    //     .decode()
+    //     .unwrap();
+
+    let image = image::load_from_memory(body.as_slice())
+        .map_err(|_| Error::Term(Box::new("Failed to load image")))?;
 
     let (width, height) = calc_dimension(&image, width, height);
-    let thumbnail: DynamicImage = ImageRgba8(imageops::thumbnail(&image, width, height));
+    let thumbnail = ImageRgba8(imageops::thumbnail(&image, width, height));
     let dyimage = thumbnail.to_rgba8();
 
     let mut img = astcenc::Image::<Vec<Vec<u8>>>::default();
-    let width = dyimage.width();
-    let height = dyimage.height();
-    img.extents.x = width;
-    img.extents.y = height;
+    img.extents.x = dyimage.width();
+    img.extents.y = dyimage.height();
     img.extents.z = 1;
-    for _ in 0..img.extents.z {
-        let mut channel_data: Vec<u8> = Vec::new();
-        for y in 0..img.extents.y {
-            for x in 0..img.extents.x {
-                let pixel = dyimage.get_pixel(x, y);
-                channel_data.push(pixel[0]);
-                channel_data.push(pixel[1]);
-                channel_data.push(pixel[2]);
-                channel_data.push(pixel[3]);
-            }
-        }
-        img.data.push(channel_data);
-    }
 
-    match ctx.compress(&img, swz) {
-        Ok(data) => Ok(data),
-        Err(_) => Err(Error::Term(Box::new("Failed to compress image"))),
-    }
+    let channel_data: Vec<u8> = dyimage.pixels().flat_map(|p| p.0.to_vec()).collect();
+    img.data.push(channel_data);
+
+    ctx.compress(&img, swz)
+        .map_err(|_| Error::Term(Box::new("Failed to compress image")))
 }
 
 fn calc_dimension(image: &DynamicImage, width: u32, height: u32) -> (u32, u32) {
-    if image.width() >= image.height() {
-        // landscape
-        let ratio = image.height() as f32 / image.width() as f32;
-        let height = (ratio * width as f32).round() as u32;
-
-        (width, height)
+    let ratio = if image.width() >= image.height() {
+        image.height() as f32 / image.width() as f32
     } else {
-        // portrait
-        let ratio = image.width() as f32 / image.height() as f32;
-        let width = (ratio * height as f32).round() as u32;
+        image.width() as f32 / image.height() as f32
+    };
 
-        (width, height)
+    if image.width() >= image.height() {
+        (width, (ratio * width as f32).round() as u32)
+    } else {
+        ((ratio * height as f32).round() as u32, height)
     }
 }
+
 rustler::init!("Elixir.AstcEncoder.Native");
