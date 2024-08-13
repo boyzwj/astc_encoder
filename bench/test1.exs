@@ -35,5 +35,5 @@ Benchee.run(
   memory_time: 5,
   warmup: 2,
   # formatters: [Benchee.Formatters.Console],
-  parallel: 1
+  parallel: 4
 )

@@ -1,9 +1,11 @@
-use fast_image_resize as fr;
 use fast_image_resize::images::Image;
+use fast_image_resize::{self as fr, ResizeAlg, ResizeOptions};
+use fast_image_resize::{IntoImageView, Resizer};
 use image::imageops;
 use image::DynamicImage::{self, ImageRgba8};
+use image::ImageFormat;
 use image::{GenericImageView, ImageReader};
-use rustler::{Binary, Error};
+use rustler::{Binary, Encoder, Env, Error, NifResult, OwnedBinary, Term};
 mod astcenc;
 
 mod atoms {
@@ -40,53 +42,65 @@ fn init_context(block_size: u32, speed: u32) -> astcenc::Context {
     astcenc::Context::new(config).unwrap()
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyCpu")]
 fn thumbnail<'a>(
+    env: Env<'a>,
     body: Binary<'a>,
     width: u32,
     height: u32,
     block_size: u32,
     speed: u32,
-) -> Result<Vec<u8>, Error> {
+) -> NifResult<Term<'a>> {
     let swz = astcenc::Swizzle::rgba();
     let mut ctx = init_context(block_size, speed);
+    let channel_data = resize_img(body.as_slice(), width, height)
+        .map_err(|_| Error::Term(Box::new("Failed to resize image")))?;
 
-    // let src_image = ImageReader::open("priv/test.png")
-    //     .unwrap()
-    //     .decode()
-    //     .unwrap();
-
-    let image = image::load_from_memory(body.as_slice())
-        .map_err(|_| Error::Term(Box::new("Failed to load image")))?;
-
-    let (width, height) = calc_dimension(&image, width, height);
-    let thumbnail = ImageRgba8(imageops::thumbnail(&image, width, height));
-    let dyimage = thumbnail.to_rgba8();
-
-    let mut img = astcenc::Image::<Vec<Vec<u8>>>::default();
-    img.extents.x = dyimage.width();
-    img.extents.y = dyimage.height();
-    img.extents.z = 1;
-
-    let channel_data: Vec<u8> = dyimage.pixels().flat_map(|p| p.0.to_vec()).collect();
-    img.data.push(channel_data);
-
-    ctx.compress(&img, swz)
-        .map_err(|_| Error::Term(Box::new("Failed to compress image")))
-}
-
-fn calc_dimension(image: &DynamicImage, width: u32, height: u32) -> (u32, u32) {
-    let ratio = if image.width() >= image.height() {
-        image.height() as f32 / image.width() as f32
-    } else {
-        image.width() as f32 / image.height() as f32
+    let img = astcenc::Image {
+        extents: astcenc::Extents {
+            x: width,
+            y: height,
+            z: 1,
+        },
+        data: vec![channel_data],
     };
 
-    if image.width() >= image.height() {
-        (width, (ratio * width as f32).round() as u32)
-    } else {
-        ((ratio * height as f32).round() as u32, height)
+    let compressed_data = ctx.compress(&img, swz).unwrap();
+    let mut binary: OwnedBinary = OwnedBinary::new(compressed_data.len()).unwrap();
+
+    binary.as_mut_slice().copy_from_slice(&compressed_data);
+
+    Ok(binary.release(env).encode(env))
+}
+
+fn resize_img(
+    png_buffer: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let img = image::ImageReader::new(std::io::Cursor::new(png_buffer))
+        .with_guessed_format()?
+        .decode()?;
+    let (original_width, original_height) = img.dimensions();
+    let src_image = Image::from_vec_u8(
+        original_width,
+        original_height,
+        img.to_rgba8().into_raw(),
+        fr::PixelType::U8x4,
+    )
+    .unwrap();
+
+    let mut dst_image = Image::new(width, height, src_image.pixel_type());
+    let mut resizer = fr::Resizer::new();
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        resizer.set_cpu_extensions(fr::CpuExtensions::Avx2);
     }
+    // let option =
+    //     fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3));
+    let option = fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Nearest);
+    resizer.resize(&src_image, &mut dst_image, &option).unwrap();
+    Ok(dst_image.into_vec())
 }
 
 rustler::init!("Elixir.AstcEncoder.Native");
